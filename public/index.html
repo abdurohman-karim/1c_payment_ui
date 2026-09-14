@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1C · Платёжные ордера</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<style>
+  body { font-size: 14px; background: #f5f6f8; }
+  .sidebar { min-height: calc(100vh - 56px); background: #fff; }
+  .sidebar .nav-link { color: #333; border-radius: .375rem; }
+  .sidebar .nav-link.active { background: #e7f0ff; color: #0b5ed7; font-weight: 600; }
+  .tbl td, .tbl th { vertical-align: middle; }
+  .tbl tbody tr { cursor: pointer; }
+  .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+  .guid { font-family: ui-monospace, monospace; font-size: 11px; color: #6c757d; }
+  .kv th { width: 34%; color: #6c757d; font-weight: 500; }
+  .dl-item { cursor: pointer; }
+  .dl-item:hover { background: #f1f3f5; }
+  .dropdown-results { position: absolute; z-index: 1050; max-height: 300px; overflow: auto; width: 100%; }
+  .req::after { content: " *"; color: #dc3545; }
+  pre.json { font-size: 12px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: .375rem; padding: .75rem; max-height: 420px; overflow: auto; }
+  .badge-deleted { text-decoration: line-through; }
+  #toasts { position: fixed; top: 70px; right: 16px; z-index: 2000; width: 420px; }
+  .stat { font-size: 26px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-primary px-3">
+  <a class="navbar-brand mb-0 h1" href="#/"><i class="bi bi-bank"></i> 1C · Платёжные ордера</a>
+  <button class="btn btn-sm btn-outline-light" id="btnConn" title="Настройки подключения к 1С"><i class="bi bi-plug"></i> <span id="connLabel">Подключение</span></button>
+</nav>
+
+<!-- Connection dialog -->
+<div class="modal fade" id="connModal" tabindex="-1" data-bs-backdrop="static"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title"><i class="bi bi-plug"></i> Подключение к 1С</h5><button class="btn-close" data-bs-dismiss="modal" id="connClose"></button></div>
+  <div class="modal-body">
+    <div class="mb-2"><label class="form-label req">URL OData (standard.odata)</label>
+      <input class="form-control mono" id="cBase" placeholder="http://10.0.90.102/unisoft/odata/standard.odata"></div>
+    <div class="row g-2 mb-2">
+      <div class="col-6"><label class="form-label req">Логин 1С</label><input class="form-control" id="cUser" autocomplete="username"></div>
+      <div class="col-6"><label class="form-label req">Пароль</label><div class="input-group"><input type="password" class="form-control" id="cPass" autocomplete="current-password"><button class="btn btn-outline-secondary" type="button" id="cEye"><i class="bi bi-eye"></i></button></div></div>
+    </div>
+    <div class="form-text mb-2">Данные хранятся <b>только в этом браузере</b> (localStorage) и передаются локальному прокси при каждом запросе. Сервер их не сохраняет.</div>
+    <div id="connEnvHint" class="small text-muted mb-2" hidden>На сервере есть настройки по умолчанию (<code id="connEnvInfo"></code>) — можно оставить поля пустыми и нажать «Использовать серверные».</div>
+    <div id="connResult"></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline-secondary me-auto" id="cUseEnv" hidden><i class="bi bi-hdd"></i> Использовать серверные</button>
+    <button class="btn btn-outline-danger" id="cForget"><i class="bi bi-trash"></i> Забыть</button>
+    <button class="btn btn-outline-primary" id="cTest"><i class="bi bi-activity"></i> Проверить</button>
+    <button class="btn btn-primary" id="cSave"><i class="bi bi-check-lg"></i> Сохранить и подключиться</button>
+  </div>
+</div></div></div>
+
+<div class="container-fluid">
+<div class="row">
+  <aside class="col-md-3 col-lg-2 sidebar border-end p-2">
+    <ul class="nav nav-pills flex-column gap-1" id="mainNav">
+      <li><a class="nav-link" href="#/">  <i class="bi bi-speedometer2"></i> Обзор</a></li>
+      <li class="mt-2 small text-muted text-uppercase px-2">Справочники</li>
+      <li><a class="nav-link" href="#/orgs">      <i class="bi bi-building"></i> Организации</a></li>
+      <li><a class="nav-link" href="#/contr">     <i class="bi bi-people"></i> Контрагенты</a></li>
+      <li><a class="nav-link" href="#/accounts">  <i class="bi bi-credit-card-2-front"></i> Банковские счета</a></li>
+      <li><a class="nav-link" href="#/chart">     <i class="bi bi-journal-bookmark"></i> План счетов</a></li>
+      <li class="mt-2 small text-muted text-uppercase px-2">Документы</li>
+      <li><a class="nav-link" href="#/orders">    <i class="bi bi-receipt"></i> Платёжные ордера</a></li>
+      <li><a class="nav-link fw-semibold" href="#/orders/new"><i class="bi bi-plus-circle"></i> Создать ордер</a></li>
+    </ul>
+    <div class="mt-4 px-2 small text-muted" id="cacheStatus"></div>
+  </aside>
+
+  <main class="col-md-9 col-lg-10 p-3" id="view"><div class="text-muted">Загрузка…</div></main>
+</div>
+</div>
+
+<div id="toasts"></div>
+
+<!-- Detail modal -->
+<div class="modal fade" id="detailModal" tabindex="-1"><div class="modal-dialog modal-xl modal-dialog-scrollable"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title" id="dmTitle"></h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body" id="dmBody"></div>
+  <div class="modal-footer" id="dmFooter"></div>
+</div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ============================================================================
+// Constants: entity names, field labels, reference resolution
+// ============================================================================
+const E = {
+  orgs: "Catalog_Организации",
+  contr: "Catalog_Контрагенты",
+  accounts: "Catalog_БанковскиеСчета",
+  chart: "ChartOfAccounts_Хозрасчетный",
+  orders: "Document_ПлатежныйОрдерПоступлениеДенежныхСредств",
+};
+const EMPTY = "00000000-0000-0000-0000-000000000000";
+const PAGE = 25;
+
+// Human labels for fields (everything else falls back to the raw 1C name).
+const LABELS = {
+  Ref_Key: "Идентификатор (GUID)", Code: "Код", Description: "Наименование", DeletionMark: "Пометка удаления", IsFolder: "Это группа", Parent_Key: "Родитель",
+  Number: "Номер", Date: "Дата", Posted: "Проведён", Predefined: "Предопределённый",
+  "ИНН": "ИНН", "НаименованиеПолное": "Полное наименование", "ЮрФизЛицо": "Юр/физ лицо", "Комментарий": "Комментарий", "ПИНФЛ": "ПИНФЛ", "КодПоОКПО": "ОКПО",
+  "ОсновнойБанковскийСчет_Key": "Основной банковский счёт", "ОсновнойДоговорКонтрагента_Key": "Основной договор", "ГоловнойКонтрагент_Key": "Головной контрагент",
+  "Организация_Key": "Организация", "Контрагент_Key": "Контрагент", "СчетОрганизации_Key": "Счёт организации", "СчетКонтрагента_Key": "Счёт контрагента",
+  "СчетБанк_Key": "Счёт учёта (банк)", "СчетУчетаРасчетовСКонтрагентом_Key": "Счёт расчётов с контрагентом", "ВидОперации": "Вид операции", "СуммаДокумента": "Сумма документа",
+  "НазначениеПлатежа": "Назначение платежа", "НомерВходящегоДокумента": "Номер вх. документа", "ДатаВходящегоДокумента": "Дата вх. документа", "ДатаВыписки": "Дата выписки",
+  "Оплачено": "Оплачено", "ВалютаДокумента_Key": "Валюта", "ДоговорКонтрагента_Key": "Договор контрагента", "Ответственный_Key": "Ответственный", "СтатьяДвиженияДенежныхСредств_Key": "Статья ДДС",
+  "СуммаПлатежа": "Сумма платежа", "LineNumber": "№", "СуммаНДС": "Сумма НДС", "СтавкаНДС": "Ставка НДС", "СуммаВзаиморасчетов": "Сумма взаиморасчётов", "КурсВзаиморасчетов": "Курс", "КратностьВзаиморасчетов": "Кратность",
+  "НомерСчета": "Номер счёта", "Owner": "Владелец", "Банк_Key": "Банк", "ВидСчета": "Вид счёта", "ВалютаДенежныхСредств_Key": "Валюта", "ДатаОткрытия": "Дата открытия", "ДатаЗакрытия": "Дата закрытия",
+  Type: "Тип", OffBalance: "Забалансовый", Order: "Порядок", "ЗапретитьИспользоватьВПроводках": "Запрет в проводках", "Валютный": "Валютный", "Количественный": "Количественный", "УчетПоПодразделениям": "Учёт по подразделениям",
+  "ПодразделениеОрганизации_Key": "Подразделение", "РучнаяКорректировка": "Ручная корректировка", "ФизЛицо_Key": "Физ. лицо", "ДокументОснование": "Документ-основание",
+};
+// Which cache resolves a *_Key field into a name.
+const RESOLVE = {
+  "Организация_Key": "orgs", "Контрагент_Key": "contr", "ГоловнойКонтрагент_Key": "contr",
+  "СчетОрганизации_Key": "accounts", "СчетКонтрагента_Key": "accounts", "ОсновнойБанковскийСчет_Key": "accounts",
+  "СчетБанк_Key": "chart", "СчетУчетаРасчетовСКонтрагентом_Key": "chart", "СчетПодотчетника_Key": "chart",
+  Parent_Key: null, Owner: "any",
+};
+// ВидОперации is a 1C enum (Edm.String over OData, values not listed in $metadata) — values observed in the test base.
+const OP_KINDS = ["ОплатаПокупателя", "ОплатаЛизингополучателей", "ПрочееПоступлениеБезналичныхДенежныхСредств", "ВозвратДенежныхСредствПоставщиком"];
+// Catalog_СтатьиДвиженияДенежныхСредств is NOT published — these GUIDs are the ones used in existing orders (with usage counts).
+const DDS_KNOWN = [
+  ["b9cd4dae-4717-11ea-9186-04d9f5aa09cd", "статья из Postman-коллекции (в ~1800 ордерах)"],
+  ["778416b7-bef3-11f0-ac9e-00155d4d0207", "в ~1160 ордерах"],
+  ["3599a56b-3d84-11ee-ac73-00155d4d0323", "в ~400 ордерах"],
+  ["ba21edb4-396c-11eb-a5c7-00262d7f6c04", "в ~56 ордерах"],
+];
+
+// ============================================================================
+// API helpers
+// ============================================================================
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const enc = (path) => encodeURI(path).replace(/'/g, "%27").replace(/#/g, "%23");
+const odataStr = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+
+class OneCError extends Error {
+  constructor(status, body, url) { super(); this.status = status; this.body = body; this.url = url; this.message = OneCError.extract(status, body); }
+  static extract(status, body) {
+    if (body && body["odata.error"]) return body["odata.error"].message?.value || JSON.stringify(body["odata.error"]);
+    if (body && body.proxyError) return "Прокси не смог связаться с 1С: " + body.proxyError;
+    if (status === 401) return "1С отклонила логин/пароль (401) — проверьте «Подключение»";
+    if (status === 404) return "Объект не найден (404) — возможно, сущность не опубликована или неверный GUID";
+    return typeof body === "string" ? body.slice(0, 500) : `HTTP ${status}`;
+  }
+}
+// ---- connection settings (per browser) --------------------------------------
+const CONN_KEY = "odata_conn";
+function getConn() { try { return JSON.parse(localStorage.getItem(CONN_KEY) || "null"); } catch { return null; } }
+function connHeaders(c = getConn()) { return c ? { "X-OData-Conn": btoa(unescape(encodeURIComponent(JSON.stringify(c)))) } : {}; }
+
+async function api(method, path, body) {
+  const url = "/odata" + enc(path) + (path.includes("?") ? "&" : "?") + "$format=json";
+  const res = await fetch(url, { method, headers: { ...connHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const text = await res.text();
+  let json = null; try { json = JSON.parse(text); } catch {}
+  if (!res.ok) throw new OneCError(res.status, json ?? text, url);
+  return json ?? text;
+}
+const get = (path) => api("GET", path);
+const guid = (g) => `(guid'${g}')`;
+
+// 1C's "Не удалось провести ..." carries no reason over OData (the real cause sits in the 1C message log),
+// so we show the causes we have actually observed in this base.
+const POST_HINTS = [
+  "Для вида операции «Прочее поступление» не заполнен <b>счёт расчётов с контрагентом</b> (Кт проводки) — проверено: без него 1С отказывает, с ним проводит.",
+  "Сумма строк расшифровки не равна сумме документа.",
+  "Контрагент/организация/счёт помечены на удаление или счёт учёта имеет «запрет использования в проводках».",
+  "Для «Оплата покупателя»/«Лизинг» может требоваться договор контрагента (ДоговорКонтрагента_Key) — справочник договоров в OData не опубликован.",
+  "Точную причину смотрите в 1С: откройте документ → «Провести» → окно сообщений внизу.",
+];
+const postHintsHtml = () => `<div class="small mt-2"><b>Возможные причины:</b><ul class="mb-0 ps-3">${POST_HINTS.map((h) => `<li>${h}</li>`).join("")}</ul></div>`;
+
+// ---- toasts ---------------------------------------------------------------
+function toast(kind, title, msg, detail) {
+  const id = "t" + Date.now() + Math.random();
+  $("#toasts").insertAdjacentHTML("beforeend", `<div class="toast show border-${kind}" id="${id}"><div class="toast-header text-${kind}"><strong class="me-auto">${esc(title)}</strong><button class="btn-close" data-bs-dismiss="toast"></button></div><div class="toast-body">${esc(msg)}${detail ? `<details class="mt-1"><summary class="small text-muted">подробности</summary><pre class="json mt-1">${esc(detail)}</pre></details>` : ""}</div></div>`);
+  if (kind === "success") setTimeout(() => document.getElementById(id)?.remove(), 5000);
+}
+function showError(e, ctx) {
+  console.error(e);
+  const detail = e instanceof OneCError ? `${e.status} ${decodeURIComponent(e.url)}\n\n${typeof e.body === "string" ? e.body : JSON.stringify(e.body, null, 2)}` : String(e.stack || e);
+  toast("danger", ctx || "Ошибка", e.message, detail);
+}
+
+// ============================================================================
+// Reference caches (small catalogs → load fully so every *_Key shows a name)
+// ============================================================================
+const cache = { orgs: new Map(), contr: new Map(), accounts: new Map(), chart: new Map(), loaded: false };
+async function loadCaches() {
+  const st = $("#cacheStatus");
+  const load = async (key, entity, select, fmt) => {
+    st.innerHTML = `<div class="spinner-border spinner-border-sm"></div> ${entity}…`;
+    const r = await get(`/${entity}?$select=${select}&$top=5000`);
+    for (const x of r.value) cache[key].set(x.Ref_Key, { ...x, _label: fmt(x) });
+  };
+  try {
+    await load("orgs", E.orgs, "Ref_Key,Description,ИНН,DeletionMark", (x) => x.Description);
+    await load("accounts", E.accounts, "Ref_Key,Description,НомерСчета,Owner,Owner_Type,ВидСчета,DeletionMark", (x) => `${x.НомерСчета} — ${x.Description.trim()}`);
+    await load("chart", E.chart, "Ref_Key,Code,Description,DeletionMark,ЗапретитьИспользоватьВПроводках", (x) => `${x.Code} ${x.Description}`);
+    await load("contr", E.contr, "Ref_Key,Description,ИНН,IsFolder,DeletionMark,Parent_Key", (x) => x.Description + (x.ИНН ? ` (ИНН ${x.ИНН})` : ""));
+    cache.loaded = true;
+    st.innerHTML = `<i class="bi bi-check-circle text-success"></i> справочники: ${cache.orgs.size} орг., ${cache.contr.size} контр., ${cache.accounts.size} счетов, ${cache.chart.size} счетов плана`;
+  } catch (e) { st.innerHTML = `<span class="text-danger">справочники не загрузились</span>`; showError(e, "Загрузка справочников"); }
+}
+function resolve(field, val) {
+  if (!val || val === EMPTY) return null;
+  const c = RESOLVE[field];
+  if (c === "any") for (const k of ["orgs", "contr", "accounts", "chart"]) { if (cache[k].has(val)) return cache[k].get(val)._label; }
+  if (c && cache[c]?.has(val)) return cache[c].get(val)._label;
+  return null;
+}
+const label = (f) => LABELS[f] || f.replace(/_Key$/, "");
+const fmtDate = (s) => !s || s.startsWith("0001-01-01") ? "—" : s.replace("T", " ").slice(0, 16);
+const fmtMoney = (n) => Number(n || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const isGuid = (v) => typeof v === "string" && /^[0-9a-f-]{36}$/i.test(v);
+function fmtVal(field, v) {
+  if (v === null || v === undefined || v === "") return '<span class="text-muted">—</span>';
+  if (typeof v === "boolean") return v ? '<i class="bi bi-check-square text-success"></i> да' : '<i class="bi bi-square text-muted"></i> нет';
+  if (isGuid(v)) { if (v === EMPTY) return '<span class="text-muted">— (пустая ссылка)</span>'; const n = resolve(field, v); return n ? `${esc(n)} <span class="guid">${v}</span>` : `<span class="guid">${v}</span>`; }
+  if (/^\d{4}-\d\d-\d\dT/.test(v)) return fmtDate(v);
+  if (typeof v === "number") return field.startsWith("Сумма") ? fmtMoney(v) : String(v);
+  if (Array.isArray(v)) return v.length ? renderRows(v) : '<span class="text-muted">пусто</span>';
+  if (typeof v === "object") return `<pre class="json mb-0">${esc(JSON.stringify(v, null, 1))}</pre>`;
+  return esc(v);
+}
+function renderRows(rows) {
+  const cols = Object.keys(rows[0]).filter((c) => !["Ref_Key"].includes(c) && !c.endsWith("_Type") && !(typeof rows[0][c] === "object" && rows[0][c] !== null));
+  return `<div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead class="table-light"><tr>${cols.map((c) => `<th>${esc(label(c))}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${fmtVal(c, r[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+function kvTable(obj, fields) {
+  const keys = fields || Object.keys(obj).filter((k) => !k.startsWith("odata.") && !k.endsWith("_Type") && k !== "DataVersion");
+  return `<table class="table table-sm kv mb-0"><tbody>${keys.filter((k) => k in obj).map((k) => `<tr><th>${esc(label(k))}</th><td>${fmtVal(k, obj[k])}</td></tr>`).join("")}</tbody></table>`;
+}
+
+// ============================================================================
+// Router
+// ============================================================================
+const routes = {
+  "": viewHome, orgs: viewOrgs, contr: viewContr, accounts: viewAccounts, chart: viewChart, orders: viewOrders, "orders/new": viewNewOrder,
+};
+async function router() {
+  const hash = location.hash.replace(/^#\/?/, "");
+  const [route, ...rest] = hash.split("/");
+  const key = route === "orders" && rest[0] === "new" ? "orders/new" : route;
+  document.querySelectorAll("#mainNav .nav-link").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === "#/" + key));
+  const v = $("#view"); v.innerHTML = '<div class="text-muted"><div class="spinner-border spinner-border-sm"></div> Загрузка…</div>';
+  try { await (routes[key] || viewHome)(rest, v); } catch (e) { v.innerHTML = `<div class="alert alert-danger">${esc(e.message)}</div>`; showError(e); }
+}
+window.addEventListener("hashchange", router);
+
+// ============================================================================
+// Generic list page with search + pagination + row click → detail modal
+// ============================================================================
+async function listPage(v, { title, entity, columns, search, filter, orderby, detailFields, extra, related, skipTop, deletedToggle = true }) {
+  const state = { page: 0, q: "", showDeleted: false };
+  v.innerHTML = `
+    <div class="d-flex align-items-center mb-3 gap-3">
+      <h4 class="mb-0">${esc(title)}</h4>
+      <span class="badge bg-secondary" id="lpCount"></span>
+      <span class="ms-auto"></span>
+      ${extra || ""}
+      ${search ? `<input class="form-control form-control-sm" style="width:320px" id="lpQ" placeholder="${esc(search.placeholder)}">` : ""}
+      ${deletedToggle ? `<div class="form-check form-switch"><input class="form-check-input" type="checkbox" id="lpDel"><label class="form-check-label small" for="lpDel">показывать помеченные на удаление</label></div>` : ""}
+    </div>
+    <div class="card"><div class="table-responsive"><table class="table table-hover tbl mb-0"><thead class="table-light"><tr>${columns.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead><tbody id="lpBody"></tbody></table></div>
+    <div class="card-footer d-flex align-items-center gap-2"><button class="btn btn-sm btn-outline-secondary" id="lpPrev"><i class="bi bi-chevron-left"></i></button><span class="small" id="lpPage"></span><button class="btn btn-sm btn-outline-secondary" id="lpNext"><i class="bi bi-chevron-right"></i></button><span class="small text-muted ms-auto" id="lpUrl"></span></div></div>`;
+  let rows = [];
+  async function load() {
+    const f = [];
+    if (filter) f.push(filter);
+    if (!state.showDeleted && deletedToggle) f.push("DeletionMark eq false");
+    if (state.q && search) f.push(search.build(state.q));
+    const path = `/${entity}?$top=${PAGE}&$skip=${state.page * PAGE}&$inlinecount=allpages` + (f.length ? `&$filter=${f.map((x) => `(${x})`).join(" and ")}` : "") + (orderby ? `&$orderby=${orderby}` : "");
+    $("#lpUrl", v).textContent = decodeURIComponent(path);
+    $("#lpBody", v).innerHTML = `<tr><td colspan="${columns.length}" class="text-muted"><div class="spinner-border spinner-border-sm"></div> загрузка…</td></tr>`;
+    try {
+      const r = await get(path);
+      rows = r.value; const total = Number(r["odata.count"] ?? rows.length);
+      $("#lpCount", v).textContent = total.toLocaleString("ru-RU");
+      $("#lpPage", v).textContent = `${state.page * PAGE + 1}–${Math.min(total, (state.page + 1) * PAGE)} из ${total}`;
+      $("#lpPrev", v).disabled = state.page === 0; $("#lpNext", v).disabled = (state.page + 1) * PAGE >= total;
+      $("#lpBody", v).innerHTML = rows.length ? rows.map((r, i) => `<tr data-i="${i}" class="${r.DeletionMark ? "table-secondary text-muted" : ""}">${columns.map((c) => `<td>${c.render ? c.render(r) : fmtVal(c.field, r[c.field])}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${columns.length}" class="text-muted">ничего не найдено</td></tr>`;
+      document.querySelectorAll("#lpBody tr[data-i]").forEach((tr) => tr.onclick = () => openDetail(entity, rows[tr.dataset.i], detailFields, related));
+    } catch (e) { $("#lpBody", v).innerHTML = `<tr><td colspan="${columns.length}" class="text-danger">${esc(e.message)}</td></tr>`; showError(e, "Загрузка списка"); }
+  }
+  $("#lpPrev", v).onclick = () => { state.page--; load(); };
+  $("#lpNext", v).onclick = () => { state.page++; load(); };
+  if (search) { let t; $("#lpQ", v).oninput = (e) => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value.trim(); state.page = 0; load(); }, 400); }; }
+  if (deletedToggle) $("#lpDel", v).onchange = (e) => { state.showDeleted = e.target.checked; state.page = 0; load(); };
+  await load();
+  return { reload: load };
+}
+
+// ---- detail modal ---------------------------------------------------------
+const dm = () => bootstrap.Modal.getOrCreateInstance("#detailModal");
+async function openDetail(entity, row, fields, related) {
+  $("#dmTitle").innerHTML = `${esc(row.Description || row.Number || "")} <span class="guid ms-2">${row.Ref_Key}</span>`;
+  $("#dmBody").innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+  $("#dmFooter").innerHTML = "";
+  dm().show();
+  try {
+    const full = await get(`/${entity}${guid(row.Ref_Key)}`);
+    if (entity === E.orders) return renderOrderDetail(full);
+    let html = `<div class="row"><div class="col-lg-7">${kvTable(full, fields)}</div><div class="col-lg-5">`;
+    if (related) for (const rel of related) {
+      html += `<h6 class="mt-2">${esc(rel.title)}</h6><div id="rel-${rel.id}"><div class="spinner-border spinner-border-sm"></div></div>`;
+    }
+    html += `</div></div><details class="mt-3"><summary class="small text-muted">Полный JSON из 1С</summary><pre class="json mt-2">${esc(JSON.stringify(full, null, 2))}</pre></details>`;
+    $("#dmBody").innerHTML = html;
+    if (related) for (const rel of related) rel.load(full).then((h) => { $("#rel-" + rel.id).innerHTML = h; }).catch((e) => { $("#rel-" + rel.id).innerHTML = `<span class="text-danger small">${esc(e.message)}</span>`; });
+  } catch (e) { $("#dmBody").innerHTML = `<div class="alert alert-danger">${esc(e.message)}</div>`; showError(e, "Открытие карточки"); }
+}
+
+// ============================================================================
+// Pages
+// ============================================================================
+async function viewHome(_, v) {
+  v.innerHTML = `<h4 class="mb-3">Обзор</h4><div class="row g-3" id="homeCards"></div>
+  <div class="card mt-4"><div class="card-body">
+    <h6>Как это работает</h6>
+    <ol class="mb-0 small">
+      <li>В <b>Справочниках</b> смотрите, что есть в 1С: организации (ваши юрлица), контрагенты (плательщики), их банковские счета, план счетов.</li>
+      <li>В <b>Создать ордер</b> заполняете форму как обычный пользователь — все ссылки выбираются из списков, GUID'ы подставляются сами.</li>
+      <li>Нажимаете «Создать» — документ появляется в 1С <i>непроведённым</i>. Затем «Провести» — 1С делает проводки или возвращает <b>ошибку своим текстом</b>, она будет показана здесь.</li>
+      <li>Открываете 1С и сверяете: список «Платёжные ордера (поступление)» → документ → кнопка «Дт/Кт» покажет проводки.</li>
+    </ol></div></div>`;
+  const cards = [["Организации", E.orgs, "#/orgs", "building"], ["Контрагенты", E.contr, "#/contr", "people"], ["Банковские счета", E.accounts, "#/accounts", "credit-card-2-front"], ["План счетов", E.chart, "#/chart", "journal-bookmark"], ["Платёжные ордера", E.orders, "#/orders", "receipt"]];
+  $("#homeCards").innerHTML = cards.map(([t, , h, i]) => `<div class="col-6 col-lg-2"><a class="card text-decoration-none" href="${h}"><div class="card-body"><div class="text-muted small"><i class="bi bi-${i}"></i> ${t}</div><div class="stat" data-e="${t}">…</div></div></a></div>`).join("");
+  for (const [t, e] of cards) get(`/${e}?$top=1&$select=Ref_Key&$inlinecount=allpages`).then((r) => { $(`[data-e="${t}"]`).textContent = Number(r["odata.count"]).toLocaleString("ru-RU"); }).catch(() => { $(`[data-e="${t}"]`).textContent = "?"; });
+}
+
+const relAccounts = (ownerField = "Ref_Key") => ({ id: "acc", title: "Банковские счета", load: async (o) => {
+  const list = [...cache.accounts.values()].filter((a) => a.Owner === o[ownerField]);
+  return list.length ? `<ul class="list-group list-group-flush small">${list.map((a) => `<li class="list-group-item px-0 ${a.DeletionMark ? "text-muted text-decoration-line-through" : ""}"><b>${esc(a.НомерСчета)}</b> ${esc(a.Description)} <span class="badge bg-light text-dark">${esc(a.ВидСчета)}</span></li>`).join("")}</ul>` : '<span class="text-muted small">нет счетов</span>';
+} });
+const relOrders = (field) => ({ id: "ord", title: "Последние платёжные ордера", load: async (o) => {
+  const r = await get(`/${E.orders}?$filter=${field} eq guid'${o.Ref_Key}'&$orderby=Date desc&$top=8&$select=Ref_Key,Number,Date,Posted,СуммаДокумента,ВидОперации,DeletionMark`);
+  return r.value.length ? `<table class="table table-sm small mb-0"><tbody>${r.value.map((d) => `<tr class="${d.DeletionMark ? "text-muted" : ""}"><td>${esc(d.Number)}</td><td>${fmtDate(d.Date)}</td><td class="text-end">${fmtMoney(d.СуммаДокумента)}</td><td>${d.Posted ? '<span class="badge bg-success">пров.</span>' : '<span class="badge bg-warning text-dark">не пров.</span>'}</td></tr>`).join("")}</tbody></table>` : '<span class="text-muted small">ордеров нет</span>';
+} });
+
+function viewOrgs(_, v) {
+  return listPage(v, { title: "Организации", entity: E.orgs, orderby: "Description",
+    columns: [{ label: "Наименование", field: "Description" }, { label: "ИНН", field: "ИНН" }, { label: "Код", field: "Code" }, { label: "Счетов", render: (r) => [...cache.accounts.values()].filter((a) => a.Owner === r.Ref_Key && !a.DeletionMark).length }],
+    search: { placeholder: "поиск по наименованию / ИНН", build: (q) => `substringof(${odataStr(q)}, Description) or substringof(${odataStr(q)}, ИНН)` },
+    detailFields: ["Description", "НаименованиеПолное", "ИНН", "Code", "Ref_Key", "DeletionMark", "Predefined"],
+    related: [relAccounts(), relOrders("Организация_Key")] });
+}
+function viewContr(_, v) {
+  return listPage(v, { title: "Контрагенты", entity: E.contr, orderby: "Description", filter: "IsFolder eq false",
+    columns: [{ label: "Наименование", field: "Description" }, { label: "ИНН", field: "ИНН" }, { label: "Код", field: "Code" }, { label: "Группа", render: (r) => esc(resolve("Owner", r.Parent_Key) || (cache.contr.get(r.Parent_Key)?.Description ?? "")) }, { label: "Комментарий", field: "Комментарий" }],
+    search: { placeholder: "поиск по наименованию / ИНН", build: (q) => `substringof(${odataStr(q)}, Description) or substringof(${odataStr(q)}, ИНН)` },
+    detailFields: ["Description", "НаименованиеПолное", "ИНН", "ПИНФЛ", "ЮрФизЛицо", "Code", "Parent_Key", "ОсновнойБанковскийСчет_Key", "ОсновнойДоговорКонтрагента_Key", "Комментарий", "Ref_Key", "DeletionMark"],
+    related: [relAccounts(), relOrders("Контрагент_Key")] });
+}
+function viewAccounts(_, v) {
+  return listPage(v, { title: "Банковские счета", entity: E.accounts, orderby: "Code",
+    columns: [{ label: "Номер счёта", field: "НомерСчета" }, { label: "Наименование", field: "Description" }, { label: "Владелец", render: (r) => { const n = resolve("Owner", r.Owner); return n ? `${esc(n)} <span class="badge bg-light text-dark">${r.Owner_Type?.includes("Организации") ? "организация" : "контрагент"}</span>` : `<span class="guid">${r.Owner}</span>`; } }, { label: "Вид", field: "ВидСчета" }],
+    search: { placeholder: "поиск по номеру / названию", build: (q) => `substringof(${odataStr(q)}, НомерСчета) or substringof(${odataStr(q)}, Description)` },
+    extra: `<select class="form-select form-select-sm" style="width:auto" id="accOwnerKind"><option value="">все владельцы</option><option value="org">только организации</option><option value="contr">только контрагенты</option></select>`,
+    detailFields: ["НомерСчета", "Description", "Owner", "ВидСчета", "Банк_Key", "ВалютаДенежныхСредств_Key", "ДатаОткрытия", "ДатаЗакрытия", "Code", "Ref_Key", "DeletionMark"] })
+    .then((lp) => { $("#accOwnerKind").onchange = async (e) => {
+      // Owner_Type filter is done client-side over the cache to keep the OData query simple.
+      const kind = e.target.value; if (!kind) return lp.reload();
+      const ids = [...cache.accounts.values()].filter((a) => (kind === "org") === !!a.Owner_Type?.includes("Организации"));
+      $("#lpBody").innerHTML = ids.map((r) => `<tr class="${r.DeletionMark ? "table-secondary text-muted" : ""}"><td>${esc(r.НомерСчета)}</td><td>${esc(r.Description)}</td><td>${esc(resolve("Owner", r.Owner) || r.Owner)}</td><td>${esc(r.ВидСчета)}</td></tr>`).join("");
+      $("#lpPage").textContent = `${ids.length} (из кэша)`;
+    }; });
+}
+function viewChart(_, v) {
+  return listPage(v, { title: "План счетов (Хозрасчётный)", entity: E.chart, orderby: "Order",
+    columns: [{ label: "Код", field: "Code" }, { label: "Наименование", field: "Description" }, { label: "Тип", field: "Type" }, { label: "Забаланс.", field: "OffBalance" }, { label: "Запрет в проводках", field: "ЗапретитьИспользоватьВПроводках" }],
+    search: { placeholder: "код или название (напр. 5110)", build: (q) => `startswith(Code, ${odataStr(q)}) or substringof(${odataStr(q)}, Description)` },
+    detailFields: ["Code", "Description", "Type", "OffBalance", "ЗапретитьИспользоватьВПроводках", "Валютный", "Количественный", "УчетПоПодразделениям", "Parent_Key", "Ref_Key", "Predefined", "PredefinedDataName"] });
+}
+function viewOrders(_, v) {
+  return listPage(v, { title: "Платёжные ордера (поступление ДС)", entity: E.orders, orderby: "Date desc",
+    columns: [{ label: "Номер", field: "Number" }, { label: "Дата", render: (r) => `<span class="text-nowrap">${fmtDate(r.Date)}</span>` }, { label: "Организация", render: (r) => esc(resolve("Организация_Key", r.Организация_Key) || "—") }, { label: "Контрагент", render: (r) => esc(resolve("Контрагент_Key", r.Контрагент_Key) || "—") }, { label: "Сумма", render: (r) => `<span class="text-nowrap">${fmtMoney(r.СуммаДокумента)}</span>` }, { label: "Вид операции", field: "ВидОперации" }, { label: "Статус", render: (r) => (r.DeletionMark ? '<span class="badge bg-danger">на удаление</span> ' : "") + (r.Posted ? '<span class="badge bg-success">проведён</span>' : '<span class="badge bg-warning text-dark">не проведён</span>') }],
+    search: { placeholder: "назначение / номер / комментарий", build: (q) => `substringof(${odataStr(q)}, НазначениеПлатежа) or substringof(${odataStr(q)}, Number) or substringof(${odataStr(q)}, Комментарий)` },
+    extra: `<a class="btn btn-sm btn-primary" href="#/orders/new"><i class="bi bi-plus"></i> Создать</a>` });
+}
+
+// ---- order detail + actions -----------------------------------------------
+const MAIN_FIELDS = ["Number", "Date", "Posted", "DeletionMark", "Организация_Key", "СчетОрганизации_Key", "Контрагент_Key", "СчетКонтрагента_Key", "ВидОперации", "СуммаДокумента", "ВалютаДокумента_Key", "СчетБанк_Key", "СчетУчетаРасчетовСКонтрагентом_Key", "НазначениеПлатежа", "НомерВходящегоДокумента", "ДатаВходящегоДокумента", "ДатаВыписки", "Оплачено", "ДоговорКонтрагента_Key", "Комментарий", "Ref_Key"];
+function renderOrderDetail(d) {
+  $("#dmTitle").innerHTML = `Платёжный ордер № ${esc(d.Number)} от ${fmtDate(d.Date)} ${d.Posted ? '<span class="badge bg-success">проведён</span>' : '<span class="badge bg-warning text-dark">не проведён</span>'} ${d.DeletionMark ? '<span class="badge bg-danger">помечен на удаление</span>' : ""}`;
+  const other = Object.keys(d).filter((k) => !MAIN_FIELDS.includes(k) && !k.startsWith("odata.") && !k.endsWith("_Type") && k !== "DataVersion" && !Array.isArray(d[k]));
+  $("#dmBody").innerHTML = `
+    <div class="row"><div class="col-lg-7">${kvTable(d, MAIN_FIELDS)}</div>
+    <div class="col-lg-5"><h6>Расшифровка платежа</h6>${d.РасшифровкаПлатежа?.length ? renderRows(d.РасшифровкаПлатежа.map(({ Ref_Key, ...r }) => r)) : '<span class="text-muted">пусто</span>'}
+      <details class="mt-3"><summary class="small text-muted">Остальные поля (${other.length})</summary>${kvTable(d, other)}</details></div></div>
+    <details class="mt-3"><summary class="small text-muted">Полный JSON из 1С</summary><pre class="json mt-2">${esc(JSON.stringify(d, null, 2))}</pre></details>
+    <div id="dmLog"></div>`;
+  $("#dmFooter").innerHTML = `
+    <button class="btn btn-success" id="actPost" ${d.Posted ? "disabled" : ""}><i class="bi bi-check2-circle"></i> Провести</button>
+    <button class="btn btn-outline-warning" id="actUnpost" ${!d.Posted ? "disabled" : ""}><i class="bi bi-x-circle"></i> Отменить проведение</button>
+    <button class="btn btn-outline-danger" id="actDel"><i class="bi bi-trash"></i> ${d.DeletionMark ? "Снять пометку удаления" : "Пометить на удаление"}</button>
+    <button class="btn btn-outline-secondary ms-auto" id="actReload"><i class="bi bi-arrow-clockwise"></i> Обновить</button>`;
+  const run = async (btn, title, fn) => {
+    const b = $(btn); b.disabled = true; b.insertAdjacentHTML("afterbegin", '<span class="spinner-border spinner-border-sm me-1"></span>');
+    try { await fn(); toast("success", title, "Готово"); const fresh = await get(`/${E.orders}${guid(d.Ref_Key)}`); renderOrderDetail(fresh); }
+    catch (e) { showError(e, title); $("#dmLog").innerHTML = `<div class="alert alert-danger mt-3 mb-0"><b>${esc(title)}: 1С вернула ошибку</b><br>${esc(e.message)}${title === "Проведение" ? postHintsHtml() : ""}</div>`; b.disabled = false; b.querySelector(".spinner-border")?.remove(); }
+  };
+  $("#actPost").onclick = () => run("#actPost", "Проведение", () => api("POST", `/${E.orders}${guid(d.Ref_Key)}/Post?PostingModeOperational=false`));
+  $("#actUnpost").onclick = () => run("#actUnpost", "Отмена проведения", () => api("POST", `/${E.orders}${guid(d.Ref_Key)}/Unpost`));
+  $("#actDel").onclick = () => run("#actDel", "Пометка удаления", () => api("PATCH", `/${E.orders}${guid(d.Ref_Key)}`, { DeletionMark: !d.DeletionMark }));
+  $("#actReload").onclick = () => run("#actReload", "Обновление", async () => {});
+}
+
+// ============================================================================
+// New order form
+// ============================================================================
+function viewNewOrder(_, v) {
+  const orgs = [...cache.orgs.values()].filter((o) => !o.DeletionMark);
+  const chart = [...cache.chart.values()].filter((c) => !c.DeletionMark);
+  const today = new Date(); today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  v.innerHTML = `
+  <div class="d-flex align-items-center mb-3"><h4 class="mb-0">Создать платёжный ордер (поступление денежных средств)</h4></div>
+  <div class="row g-3">
+  <div class="col-xl-8">
+  <form id="orderForm" class="card"><div class="card-body">
+    <h6 class="text-muted">Кто получает</h6>
+    <div class="row g-2 mb-3">
+      <div class="col-md-6"><label class="form-label req">Организация</label>
+        <select class="form-select" id="fOrg" required><option value="">— выберите —</option>${orgs.map((o) => `<option value="${o.Ref_Key}">${esc(o.Description)}${o.ИНН ? ` (ИНН ${o.ИНН})` : ""}</option>`).join("")}</select></div>
+      <div class="col-md-6"><label class="form-label req">Счёт организации (р/с, на который пришли деньги)</label>
+        <select class="form-select" id="fOrgAcc" required disabled><option value="">— сначала организация —</option></select></div>
+    </div>
+
+    <h6 class="text-muted">Кто платит</h6>
+    <div class="row g-2 mb-3">
+      <div class="col-md-6 position-relative"><label class="form-label req">Контрагент</label>
+        <input class="form-control" id="fContrQ" placeholder="начните вводить название или ИНН" autocomplete="off">
+        <input type="hidden" id="fContr">
+        <div class="list-group dropdown-results shadow" id="contrResults" hidden></div>
+        <div class="form-text" id="fContrPicked"></div></div>
+      <div class="col-md-6"><label class="form-label">Счёт контрагента</label>
+        <select class="form-select" id="fContrAcc" disabled><option value="">— не указан —</option></select></div>
+    </div>
+
+    <h6 class="text-muted">Платёж</h6>
+    <div class="row g-2 mb-3">
+      <div class="col-md-3"><label class="form-label req">Дата документа</label><input type="datetime-local" class="form-control" id="fDate" value="${today.toISOString().slice(0, 16)}" required></div>
+      <div class="col-md-3"><label class="form-label req">Сумма</label><input type="number" step="0.01" min="0.01" class="form-control" id="fSum" value="1010" required></div>
+      <div class="col-md-6"><label class="form-label req">Вид операции</label>
+        <select class="form-select" id="fOp">${OP_KINDS.map((k, i) => `<option ${i === 2 ? "selected" : ""}>${k}</option>`).join("")}<option value="__custom">другое (ввести имя значения)…</option></select>
+        <input class="form-control mt-1" id="fOpCustom" placeholder="Имя значения перечисления ВидОперации" hidden></div>
+      <div class="col-md-8"><label class="form-label req">Назначение платежа</label><input class="form-control" id="fPurpose" value="Test via API" required></div>
+      <div class="col-md-2"><label class="form-label">№ вх. документа</label><input class="form-control" id="fInNum" placeholder="из выписки"></div>
+      <div class="col-md-2"><label class="form-label">Дата вх. документа</label><input type="date" class="form-control" id="fInDate"></div>
+      <div class="col-md-8"><label class="form-label">Комментарий</label><input class="form-control" id="fComment" value="Создано через тестовый интерфейс"></div>
+      <div class="col-md-4"><label class="form-label req">Счёт учёта ДС (Дт проводки)</label>
+        <select class="form-select" id="fChart">${chart.filter((c) => c.Code.startsWith("5")).map((c) => `<option value="${c.Ref_Key}" ${c.Code === "5110" ? "selected" : ""}>${esc(c.Code)} ${esc(c.Description)}</option>`).join("")}</select></div>
+      <div class="col-md-8"><label class="form-label">Счёт расчётов с контрагентом (Кт проводки)</label>
+        <select class="form-select" id="fSettle"><option value="">— не указан (для «Оплата покупателя»/«Лизинг» 1С подставит сама) —</option>${chart.filter((c) => !c.ЗапретитьИспользоватьВПроводках).map((c) => `<option value="${c.Ref_Key}">${esc(c.Code)} ${esc(c.Description)}</option>`).join("")}</select>
+        <div class="form-text" id="settleHint"></div></div>
+      <div class="col-md-4"><label class="form-label">Статья ДДС в шапке (GUID)</label><input class="form-control mono" id="fHeadDds" list="ddsList" placeholder="необязательно"></div>
+    </div>
+
+    <h6 class="text-muted d-flex align-items-center">Расшифровка платежа <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="addRow"><i class="bi bi-plus"></i> строка</button></h6>
+    <div class="form-text mb-1">Справочник «Статьи движения денежных средств» в OData не опубликован, поэтому статья указывается GUID'ом. Ниже — статьи, которые уже используются в существующих ордерах.</div>
+    <table class="table table-sm align-middle" id="rowsTbl"><thead class="table-light"><tr><th style="width:40px">№</th><th style="width:180px">Сумма платежа</th><th>Статья ДДС (GUID)</th><th style="width:40px"></th></tr></thead><tbody></tbody></table>
+    <datalist id="ddsList">${DDS_KNOWN.map(([g, d]) => `<option value="${g}">${esc(d)}</option>`).join("")}</datalist>
+    <div class="small" id="rowsSumHint"></div>
+
+    <hr>
+    <div class="form-check mb-3"><input class="form-check-input" type="checkbox" id="fPostNow"><label class="form-check-label" for="fPostNow">Провести сразу (<code>Posted: true</code> в самом POST). Без галочки документ создаётся непроведённым — потом можно нажать «Провести» и увидеть ошибку проведения отдельно.</label></div>
+    <div class="d-flex gap-2 align-items-center">
+      <button class="btn btn-primary" type="submit" id="btnCreate"><i class="bi bi-send"></i> Создать в 1С</button>
+      <button class="btn btn-outline-secondary" type="button" id="btnPreview"><i class="bi bi-code-slash"></i> Показать JSON</button>
+      <button class="btn btn-link btn-sm" type="button" id="btnReset">сбросить</button>
+    </div>
+    <div id="formErrors" class="mt-3"></div>
+  </div></form>
+  </div>
+
+  <div class="col-xl-4">
+    <div class="card mb-3" id="payloadCard" hidden><div class="card-header small">JSON, который уйдёт в 1С</div><pre class="json mb-0 rounded-0 rounded-bottom border-0" id="payloadPre"></pre></div>
+    <div class="card" id="resultCard" hidden><div class="card-header"><b>Результат</b></div><div class="card-body" id="resultBody"></div></div>
+    <div class="card mt-3"><div class="card-body small">
+      <b>Что проверить в 1С после создания</b>
+      <ol class="mb-0 ps-3">
+        <li>Банк и касса → Платёжные ордера (поступление) → найти по номеру/дате.</li>
+        <li>Открыть документ: организация, контрагент, счёт, сумма, назначение.</li>
+        <li>Кнопка <b>Дт/Кт</b> — есть ли проводка Дт 5110 / Кт (счёт расчётов с контрагентом).</li>
+        <li>Если документ не проведён — здесь нажать «Провести» и прочитать ошибку 1С.</li>
+      </ol></div></div>
+  </div></div>`;
+
+  // --- dependent selects -----------------------------------------------------
+  const accOptions = (owner) => [...cache.accounts.values()].filter((a) => a.Owner === owner && !a.DeletionMark).map((a) => `<option value="${a.Ref_Key}">${esc(a.НомерСчета)} — ${esc(a.Description.trim())} [${esc(a.ВидСчета)}]</option>`).join("");
+  $("#fOrg").onchange = () => {
+    const html = accOptions($("#fOrg").value);
+    $("#fOrgAcc").innerHTML = html ? `<option value="">— выберите —</option>` + html : `<option value="">у организации нет счетов</option>`; $("#fOrgAcc").disabled = !html;
+    if (html && $("#fOrgAcc").options.length === 2) $("#fOrgAcc").selectedIndex = 1;
+  };
+  const SETTLE_BY_OP = { // most used Кт accounts per operation kind in the test base
+    "ПрочееПоступлениеБезналичныхДенежныхСредств": ["6630", "6990", "4610", "4720"], "ОплатаПокупателя": [], "ОплатаЛизингополучателей": [], "ВозвратДенежныхСредствПоставщиком": [] };
+  const settleHint = () => {
+    const op = $("#fOp").value, codes = SETTLE_BY_OP[op] || [];
+    $("#settleHint").innerHTML = codes.length
+      ? `<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Для «${esc(op)}» 1С <b>не проведёт</b> документ без этого поля.</span> В базе для этого вида чаще всего: ${codes.map((c) => `<a href="#" class="settle-pick" data-c="${c}">${c}</a>`).join(", ")}`
+      : `Для «${esc(op)}» в проведённых документах базы это поле обычно пустое — 1С определяет счёт по контрагенту/договору.`;
+    document.querySelectorAll(".settle-pick").forEach((a) => a.onclick = (e) => { e.preventDefault(); const o = [...$("#fSettle").options].find((o) => o.text.startsWith(a.dataset.c + " ")); if (o) $("#fSettle").value = o.value; });
+  };
+  $("#fOp").onchange = () => { $("#fOpCustom").hidden = $("#fOp").value !== "__custom"; settleHint(); };
+  settleHint();
+
+  // --- counterparty search (over the loaded cache — 1C has ~700, instant) ----
+  const cq = $("#fContrQ"), cr = $("#contrResults");
+  cq.oninput = () => {
+    const q = cq.value.trim().toLowerCase(); $("#fContr").value = ""; $("#fContrPicked").textContent = ""; $("#fContrAcc").innerHTML = '<option value="">— не указан —</option>'; $("#fContrAcc").disabled = true;
+    if (q.length < 2) { cr.hidden = true; return; }
+    const hits = [...cache.contr.values()].filter((c) => !c.IsFolder && !c.DeletionMark && (c.Description.toLowerCase().includes(q) || (c.ИНН || "").includes(q))).slice(0, 15);
+    cr.innerHTML = hits.length ? hits.map((c) => `<a class="list-group-item list-group-item-action dl-item small" data-k="${c.Ref_Key}"><b>${esc(c.Description)}</b>${c.ИНН ? ` <span class="text-muted">ИНН ${esc(c.ИНН)}</span>` : ""}</a>`).join("") : '<div class="list-group-item small text-muted">не найдено в кэше — проверьте ИНН или создайте контрагента в 1С</div>';
+    cr.hidden = false;
+  };
+  cr.onclick = (e) => {
+    const a = e.target.closest("[data-k]"); if (!a) return;
+    const c = cache.contr.get(a.dataset.k);
+    $("#fContr").value = c.Ref_Key; cq.value = c.Description; cr.hidden = true;
+    $("#fContrPicked").innerHTML = `<i class="bi bi-check text-success"></i> ${esc(c.ИНН ? "ИНН " + c.ИНН : "без ИНН")} · <span class="guid">${c.Ref_Key}</span>`;
+    const html = accOptions(c.Ref_Key); $("#fContrAcc").innerHTML = '<option value="">— не указан —</option>' + html; $("#fContrAcc").disabled = !html;
+  };
+  document.addEventListener("click", (e) => { if (!e.target.closest("#fContrQ,#contrResults")) cr.hidden = true; });
+
+  // --- payment breakdown rows -------------------------------------------------
+  const tb = $("#rowsTbl tbody");
+  const addRow = (sum = "", dds = DDS_KNOWN[0][0]) => {
+    tb.insertAdjacentHTML("beforeend", `<tr><td class="text-muted rn"></td><td><input type="number" step="0.01" class="form-control form-control-sm r-sum" value="${sum}"></td><td><input class="form-control form-control-sm mono r-dds" list="ddsList" value="${dds}"></td><td><button type="button" class="btn btn-sm btn-link text-danger r-del"><i class="bi bi-x-lg"></i></button></td></tr>`);
+    renum();
+  };
+  const renum = () => { tb.querySelectorAll("tr").forEach((tr, i) => tr.querySelector(".rn").textContent = i + 1); sumHint(); };
+  const rowsSum = () => [...tb.querySelectorAll(".r-sum")].reduce((s, i) => s + Number(i.value || 0), 0);
+  const sumHint = () => { const rs = rowsSum(), ds = Number($("#fSum").value || 0); $("#rowsSumHint").innerHTML = Math.abs(rs - ds) < 0.005 ? `<span class="text-success"><i class="bi bi-check"></i> сумма строк ${fmtMoney(rs)} = сумме документа</span>` : `<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> сумма строк ${fmtMoney(rs)} ≠ сумме документа ${fmtMoney(ds)} — 1С может отказать в проведении</span>`; };
+  tb.addEventListener("click", (e) => { if (e.target.closest(".r-del")) { e.target.closest("tr").remove(); renum(); } });
+  tb.addEventListener("input", sumHint); $("#fSum").addEventListener("input", sumHint);
+  $("#addRow").onclick = () => addRow();
+  addRow($("#fSum").value);
+  $("#fSum").addEventListener("change", () => { const rows = tb.querySelectorAll(".r-sum"); if (rows.length === 1) { rows[0].value = $("#fSum").value; sumHint(); } });
+
+  // --- payload -----------------------------------------------------------------
+  function validate() {
+    const errs = [];
+    if (!$("#fOrg").value) errs.push("Не выбрана организация");
+    if (!$("#fOrgAcc").value) errs.push("Не выбран счёт организации");
+    if (!$("#fContr").value) errs.push("Не выбран контрагент (выберите из списка подсказок)");
+    if (!(Number($("#fSum").value) > 0)) errs.push("Сумма должна быть больше 0");
+    if (!$("#fPurpose").value.trim()) errs.push("Не заполнено назначение платежа");
+    const rows = [...tb.querySelectorAll("tr")];
+    if (!rows.length) errs.push("Добавьте хотя бы одну строку расшифровки");
+    rows.forEach((tr, i) => { if (!isGuid(tr.querySelector(".r-dds").value.trim())) errs.push(`Строка ${i + 1}: статья ДДС должна быть GUID`); if (!(Number(tr.querySelector(".r-sum").value) > 0)) errs.push(`Строка ${i + 1}: сумма должна быть > 0`); });
+    return errs;
+  }
+  function buildPayload() {
+    const op = $("#fOp").value === "__custom" ? $("#fOpCustom").value.trim() : $("#fOp").value;
+    const p = {
+      Date: $("#fDate").value.length === 16 ? $("#fDate").value + ":00" : $("#fDate").value,
+      "Организация_Key": $("#fOrg").value,
+      "СчетОрганизации_Key": $("#fOrgAcc").value,
+      "Контрагент_Key": $("#fContr").value,
+      "ВидОперации": op,
+      "СчетБанк_Key": $("#fChart").value,
+      "СуммаДокумента": Number($("#fSum").value),
+      "НазначениеПлатежа": $("#fPurpose").value.trim(),
+      "Комментарий": $("#fComment").value.trim(),
+      "РасшифровкаПлатежа": [...tb.querySelectorAll("tr")].map((tr, i) => ({ LineNumber: String(i + 1), "СуммаПлатежа": Number(tr.querySelector(".r-sum").value), "СтатьяДвиженияДенежныхСредств_Key": tr.querySelector(".r-dds").value.trim() })),
+      Posted: $("#fPostNow").checked,
+    };
+    if ($("#fContrAcc").value) p["СчетКонтрагента_Key"] = $("#fContrAcc").value;
+    if ($("#fSettle").value) p["СчетУчетаРасчетовСКонтрагентом_Key"] = $("#fSettle").value;
+    if (isGuid($("#fHeadDds").value.trim())) p["СтатьяДвиженияДенежныхСредств_Key"] = $("#fHeadDds").value.trim();
+    if ($("#fInNum").value.trim()) p["НомерВходящегоДокумента"] = $("#fInNum").value.trim();
+    if ($("#fInDate").value) p["ДатаВходящегоДокумента"] = $("#fInDate").value + "T00:00:00";
+    return p;
+  }
+  const showPayload = () => { $("#payloadCard").hidden = false; $("#payloadPre").textContent = JSON.stringify(buildPayload(), null, 2); };
+  $("#btnPreview").onclick = showPayload;
+  $("#btnReset").onclick = () => viewNewOrder(_, v);
+
+  // --- submit -------------------------------------------------------------------
+  $("#orderForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const errs = validate();
+    $("#formErrors").innerHTML = errs.length ? `<div class="alert alert-warning mb-0"><b>Проверьте форму:</b><ul class="mb-0">${errs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+    if (errs.length) return;
+    showPayload();
+    const payload = buildPayload();
+    const b = $("#btnCreate"); b.disabled = true; b.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Отправка в 1С…';
+    $("#resultCard").hidden = false; $("#resultBody").innerHTML = '<div class="text-muted">ждём ответ 1С…</div>';
+    try {
+      const doc = await api("POST", `/${E.orders}`, payload);
+      toast("success", "Документ создан", `№ ${doc.Number} от ${fmtDate(doc.Date)}`);
+      $("#resultBody").innerHTML = `
+        <div class="alert alert-success"><i class="bi bi-check-circle"></i> <b>Создан</b>: Платёжный ордер <b>№ ${esc(doc.Number)}</b> от ${fmtDate(doc.Date)}<br>
+        ${doc.Posted ? '<span class="badge bg-success">проведён</span>' : '<span class="badge bg-warning text-dark">не проведён</span>'} · <span class="guid">${doc.Ref_Key}</span></div>
+        <div class="d-grid gap-2">
+          <button class="btn btn-success" id="resPost" ${doc.Posted ? "disabled" : ""}><i class="bi bi-check2-circle"></i> Провести сейчас</button>
+          <button class="btn btn-outline-primary" id="resOpen"><i class="bi bi-box-arrow-up-right"></i> Открыть карточку</button>
+        </div>
+        <div class="small text-muted mt-2">Теперь откройте 1С и найдите документ № ${esc(doc.Number)}.</div>
+        <details class="mt-2"><summary class="small text-muted">Ответ 1С (JSON)</summary><pre class="json mt-1">${esc(JSON.stringify(doc, null, 2))}</pre></details>
+        <div id="resLog"></div>`;
+      $("#resOpen").onclick = () => openDetail(E.orders, doc);
+      $("#resPost").onclick = async () => {
+        const pb = $("#resPost"); pb.disabled = true; pb.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Проводим…';
+        try { await api("POST", `/${E.orders}${guid(doc.Ref_Key)}/Post?PostingModeOperational=false`); toast("success", "Проведён", `№ ${doc.Number}`); $("#resLog").innerHTML = '<div class="alert alert-success mt-2 mb-0">Проведено. Проверьте проводки в 1С (Дт/Кт).</div>'; pb.innerHTML = '<i class="bi bi-check2-all"></i> Проведён'; }
+        catch (err) { showError(err, "Проведение"); $("#resLog").innerHTML = `<div class="alert alert-danger mt-2 mb-0"><b>1С отказала в проведении:</b><br>${esc(err.message)}${postHintsHtml()}<div class="small text-muted mt-1">Документ остался в 1С непроведённым — исправьте поля в карточке (PATCH) или в 1С, либо пометьте на удаление.</div></div>`; pb.disabled = false; pb.innerHTML = '<i class="bi bi-check2-circle"></i> Провести ещё раз'; }
+      };
+    } catch (err) {
+      showError(err, "Создание документа");
+      $("#resultBody").innerHTML = `<div class="alert alert-danger mb-0"><b>1С не создала документ (HTTP ${err.status ?? "?"})</b><br>${esc(err.message)}
+        <details class="mt-2"><summary class="small">полный ответ</summary><pre class="json mt-1">${esc(typeof err.body === "string" ? err.body : JSON.stringify(err.body, null, 2))}</pre></details></div>`;
+    } finally { b.disabled = false; b.innerHTML = '<i class="bi bi-send"></i> Создать в 1С'; }
+  };
+}
+
+// ============================================================================
+// Init
+// ============================================================================
+let serverCfg = { hasEnv: false };
+const cm = () => bootstrap.Modal.getOrCreateInstance("#connModal");
+function connLabel() {
+  const c = getConn();
+  let host = ""; try { host = new URL(c ? c.base : serverCfg.envBase).host; } catch {}
+  $("#connLabel").textContent = c ? `${c.user}@${host}` : serverCfg.hasEnv ? `${serverCfg.envUser}@${host} (сервер)` : "Подключение не задано";
+}
+function openConn() {
+  const c = getConn();
+  $("#cBase").value = c?.base || serverCfg.envBase || ""; $("#cUser").value = c?.user || serverCfg.envUser || ""; $("#cPass").value = c?.password || "";
+  $("#connEnvHint").hidden = $("#cUseEnv").hidden = !serverCfg.hasEnv; $("#connEnvInfo").textContent = `${serverCfg.envUser}@${serverCfg.envBase}`;
+  $("#connResult").innerHTML = ""; cm().show();
+}
+function readConnForm() { return { base: $("#cBase").value.trim().replace(/\/+$/, ""), user: $("#cUser").value.trim(), password: $("#cPass").value }; }
+async function testConn(c) {
+  $("#connResult").innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm"></span> проверяем…</div>';
+  try {
+    const res = await fetch("/odata/?$format=json", { headers: connHeaders(c) });
+    const text = await res.text(); let j = null; try { j = JSON.parse(text); } catch {}
+    if (!res.ok) throw new OneCError(res.status, j ?? text, "/odata/");
+    const n = j?.value?.length ?? 0;
+    $("#connResult").innerHTML = `<div class="alert alert-success py-2 mb-0"><i class="bi bi-check-circle"></i> Подключились: опубликовано ${n} сущностей${n && !j.value.some((x) => x.name === E.orders) ? ' <br><span class="text-warning">но документ «Платёжный ордер» среди них не найден</span>' : ""}</div>`;
+    return true;
+  } catch (e) { $("#connResult").innerHTML = `<div class="alert alert-danger py-2 mb-0"><i class="bi bi-x-circle"></i> ${esc(e.message)}</div>`; return false; }
+}
+function wireConn() {
+  $("#btnConn").onclick = openConn;
+  $("#cEye").onclick = () => { $("#cPass").type = $("#cPass").type === "password" ? "text" : "password"; };
+  $("#cTest").onclick = () => { const c = readConnForm(); if (!c.base) return $("#connResult").innerHTML = '<div class="text-danger small">Укажите URL</div>'; testConn(c); };
+  $("#cSave").onclick = async () => {
+    const c = readConnForm();
+    if (!c.base || !c.user) return $("#connResult").innerHTML = '<div class="text-danger small">Заполните URL и логин</div>';
+    if (!(await testConn(c))) return;
+    localStorage.setItem(CONN_KEY, JSON.stringify(c)); location.reload();
+  };
+  $("#cUseEnv").onclick = () => { localStorage.removeItem(CONN_KEY); location.reload(); };
+  $("#cForget").onclick = () => { localStorage.removeItem(CONN_KEY); $("#cBase").value = $("#cUser").value = $("#cPass").value = ""; $("#connResult").innerHTML = '<div class="text-muted small">Сохранённое подключение удалено из этого браузера.</div>'; connLabel(); };
+}
+
+(async () => {
+  wireConn();
+  try { serverCfg = await (await fetch("/config")).json(); } catch {}
+  connLabel();
+  if (!getConn() && !serverCfg.hasEnv) {
+    $("#view").innerHTML = '<div class="alert alert-info"><i class="bi bi-plug"></i> Сначала укажите подключение к 1С (URL, логин, пароль) — кнопка «Подключение» справа вверху.</div>';
+    $("#connClose").hidden = true; openConn(); return;
+  }
+  await loadCaches();
+  router();
+})();
+</script>
+</body>
+</html>

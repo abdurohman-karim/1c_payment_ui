@@ -1,0 +1,7 @@
+{
+  "name": "1c-payment-ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "User-style UI over 1C OData: browse catalogs, create & post incoming payment orders",
+  "scripts": { "start": "node server.js" }
+}
