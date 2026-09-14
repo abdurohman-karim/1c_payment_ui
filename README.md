@@ -54,3 +54,53 @@ node server.js          # или node server.js 4000 — другой порт
 «Подключение».
 
 Локально с эмуляцией функций: `npx netlify-cli dev` (или по-прежнему `node server.js`).
+
+## Режим «Напрямую из браузера» (сайт на Netlify + 1С в офисной сети/VPN)
+
+Сервер Netlify не видит `10.0.90.102`, но **браузер сотрудника** (на VPN/офисном Wi-Fi) —
+видит. В окне «Подключение» есть режим **«Напрямую из браузера»**: запросы к 1С делает сам
+браузер, с Basic-auth заголовком; прокси не участвует. Фреймворк (React/vanilla) роли не играет —
+всё решают два условия на стороне **1С/IIS**, без них браузер заблокирует запросы:
+
+### 1. CORS на IIS (обязательно)
+Браузер перед каждым запросом шлёт `OPTIONS` **без авторизации**; сейчас IIS отвечает на него
+`401`, и заголовков `Access-Control-Allow-*` нет. Нужно установить
+[IIS CORS Module](https://www.iis.net/downloads/microsoft/iis-cors-module) и в `web.config`
+приложения `unisoft` добавить:
+
+```xml
+<configuration>
+  <system.webServer>
+    <cors enabled="true" failUnlistedOrigins="true">
+      <!-- вместо * можно перечислить конкретные origin: https://1cui-txqe.netlify.app -->
+      <add origin="*" allowCredentials="false" maxAge="600">
+        <allowHeaders allowAllRequestedHeaders="true" />
+        <allowMethods>
+          <add method="GET" /><add method="POST" /><add method="PATCH" />
+          <add method="DELETE" /><add method="OPTIONS" />
+        </allowMethods>
+      </add>
+    </cors>
+  </system.webServer>
+</configuration>
+```
+Модуль отвечает на preflight сам, до аутентификации — поэтому `401` на `OPTIONS` исчезает.
+
+### 2. HTTPS с нормальным сертификатом (обязательно)
+Сайт на Netlify открыт по HTTPS → браузер разрешит запросы только на `https://10.0.90.102/…`.
+HTTPS на сервере уже есть, но текущий сертификат (`CN=1CSerBuh`, самоподписанный) Chrome
+**отвергает без возможности исключения** (`ERR_SSL_KEY_USAGE_INCOMPATIBLE`): в Key Usage нет
+`Digital Signature`, нет SAN. Нужен новый сертификат — от внутреннего CA, либо самоподписанный
+с правильными расширениями (PowerShell на сервере 1С, от администратора):
+
+```powershell
+New-SelfSignedCertificate -DnsName "10.0.90.102","1CSerBuh" -CertStoreLocation cert:\LocalMachine\My `
+  -KeyUsage DigitalSignature,KeyEncipherment -KeyAlgorithm RSA -KeyLength 2048 `
+  -NotAfter (Get-Date).AddYears(5) -FriendlyName "1C OData"
+# затем в IIS → Bindings → https → выбрать этот сертификат
+```
+Самоподписанный сертификат каждому сотруднику придётся один раз принять в браузере
+(ссылка «открыть URL 1С» в окне подключения) или установить в доверенные.
+
+После этого: «Подключение» → URL `https://10.0.90.102/unisoft/odata/standard.odata` →
+режим «Напрямую из браузера» → «Проверить».

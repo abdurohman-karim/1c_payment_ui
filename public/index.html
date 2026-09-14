@@ -43,7 +43,14 @@
       <div class="col-6"><label class="form-label req">Логин 1С</label><input class="form-control" id="cUser" autocomplete="username"></div>
       <div class="col-6"><label class="form-label req">Пароль</label><div class="input-group"><input type="password" class="form-control" id="cPass" autocomplete="current-password"><button class="btn btn-outline-secondary" type="button" id="cEye"><i class="bi bi-eye"></i></button></div></div>
     </div>
-    <div class="form-text mb-2">Данные хранятся <b>только в этом браузере</b> (localStorage) и передаются локальному прокси при каждом запросе. Сервер их не сохраняет.</div>
+    <div class="mb-2"><label class="form-label">Как ходить в 1С</label>
+      <div class="form-check"><input class="form-check-input" type="radio" name="cMode" id="cModeProxy" value="proxy" checked><label class="form-check-label" for="cModeProxy"><b>Через прокси-сервер</b> — запросы делает сервер этого сайта (локальный <code>node server.js</code> или функция Netlify). 1С должна быть доступна <i>с сервера</i>.</label></div>
+      <div class="form-check"><input class="form-check-input" type="radio" name="cMode" id="cModeDirect" value="direct"><label class="form-check-label" for="cModeDirect"><b>Напрямую из браузера</b> — запросы делает ваш браузер, сервер сайта 1С не видит. Для сайта на Netlify + 1С в офисной сети/VPN. Требует на стороне 1С/IIS: <b>CORS</b> и <b>HTTPS</b> (см. README).</label></div>
+    </div>
+    <div id="directHelp" class="small mb-2" hidden>
+      <div class="alert alert-warning py-2 mb-1">Сайт открыт по HTTPS → URL 1С тоже должен быть <code>https://…</code>. Если у 1С самоподписанный сертификат, один раз откройте его адрес в новой вкладке и подтвердите исключение безопасности: <a href="#" id="cOpenBase" target="_blank" rel="noopener">открыть URL 1С <i class="bi bi-box-arrow-up-right"></i></a></div>
+    </div>
+    <div class="form-text mb-2">Данные хранятся <b>только в этом браузере</b> (localStorage). В режиме прокси они передаются серверу сайта при каждом запросе (он их не сохраняет); в прямом режиме — сразу в 1С.</div>
     <div id="connEnvHint" class="small text-muted mb-2" hidden>На сервере есть настройки по умолчанию (<code id="connEnvInfo"></code>) — можно оставить поля пустыми и нажать «Использовать серверные».</div>
     <div id="connResult"></div>
   </div>
@@ -144,7 +151,7 @@ class OneCError extends Error {
   constructor(status, body, url) { super(); this.status = status; this.body = body; this.url = url; this.message = OneCError.extract(status, body); }
   static extract(status, body) {
     if (body && body["odata.error"]) return body["odata.error"].message?.value || JSON.stringify(body["odata.error"]);
-    if (body && body.proxyError) return "Прокси не смог связаться с 1С: " + body.proxyError;
+    if (body && body.proxyError) return (status ? "Прокси не смог связаться с 1С: " : "") + body.proxyError;
     if (status === 401) return "1С отклонила логин/пароль (401) — проверьте «Подключение»";
     if (status === 404) return "Объект не найден (404) — возможно, сущность не опубликована или неверный GUID";
     return typeof body === "string" ? body.slice(0, 500) : `HTTP ${status}`;
@@ -157,9 +164,24 @@ function getConn() { try { return JSON.parse(localStorage.getItem(CONN_KEY) || "
 const envOptedOut = () => localStorage.getItem(NOENV_KEY) === "1";
 function connHeaders(c = getConn()) { return c ? { "X-OData-Conn": btoa(unescape(encodeURIComponent(JSON.stringify(c)))) } : envOptedOut() ? { "X-OData-Conn": "none" } : {}; }
 
+const b64utf8 = (str) => btoa(unescape(encodeURIComponent(str)));
+// Direct mode: the browser itself calls 1C (needs CORS + HTTPS on the 1C/IIS side). Proxy mode: via /odata on our server.
+function directFetch(c, method, pathWithQuery, body, extraHeaders = {}) {
+  const url = c.base.replace(/\/+$/, "") + pathWithQuery;
+  return fetch(url, { method, mode: "cors", credentials: "omit", headers: { Authorization: "Basic " + b64utf8(`${c.user}:${c.password}`), Accept: "application/json", ...extraHeaders }, body });
+}
+const DIRECT_FAIL = "Браузер не смог обратиться к 1С напрямую. Причины: (1) вы не в офисной сети/VPN; (2) на 1С/IIS не настроен CORS — ответ на OPTIONS без авторизации и заголовки Access-Control-Allow-*; (3) URL не https или сертификат 1С не принят в браузере (откройте URL 1С в новой вкладке). Подробности — в консоли браузера (F12).";
+
 async function api(method, path, body) {
-  const url = "/odata" + enc(path) + (path.includes("?") ? "&" : "?") + "$format=json";
-  const res = await fetch(url, { method, headers: { ...connHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const q = enc(path) + (path.includes("?") ? "&" : "?") + "$format=json";
+  const c = getConn();
+  let res;
+  if (c?.direct) {
+    try { res = await directFetch(c, method, q, body ? JSON.stringify(body) : undefined, body ? { "Content-Type": "application/json" } : {}); }
+    catch (e) { throw new OneCError(0, { proxyError: DIRECT_FAIL }, c.base + q); }
+  } else {
+    res = await fetch("/odata" + q, { method, headers: { ...connHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  }
   const text = await res.text();
   let json = null; try { json = JSON.parse(text); } catch {}
   if (!res.ok) throw new OneCError(res.status, json ?? text, url);
@@ -631,21 +653,29 @@ const cm = () => bootstrap.Modal.getOrCreateInstance("#connModal");
 function connLabel() {
   const c = getConn();
   let host = ""; try { host = new URL(c ? c.base : serverCfg.envBase).host; } catch {}
-  $("#connLabel").textContent = c ? `${c.user}@${host}` : serverCfg.hasEnv && !envOptedOut() ? `${serverCfg.envUser}@${host} (сервер)` : "Подключение не задано";
+  $("#connLabel").textContent = c ? `${c.user}@${host}${c.direct ? " (напрямую)" : ""}` : serverCfg.hasEnv && !envOptedOut() ? `${serverCfg.envUser}@${host} (сервер)` : "Подключение не задано";
 }
 function openConn() {
   const c = getConn();
   const useEnv = serverCfg.hasEnv && !envOptedOut();
   $("#cBase").value = c?.base || (useEnv ? serverCfg.envBase : "") || ""; $("#cUser").value = c?.user || (useEnv ? serverCfg.envUser : "") || ""; $("#cPass").value = c?.password || "";
+  $("#cModeDirect").checked = !!c?.direct; $("#cModeProxy").checked = !c?.direct; syncModeUi();
   $("#cForget").disabled = !c && !useEnv;
   $("#connEnvHint").hidden = $("#cUseEnv").hidden = !serverCfg.hasEnv; $("#connEnvInfo").textContent = `${serverCfg.envUser}@${serverCfg.envBase}`;
   $("#connResult").innerHTML = ""; cm().show();
 }
-function readConnForm() { return { base: $("#cBase").value.trim().replace(/\/+$/, ""), user: $("#cUser").value.trim(), password: $("#cPass").value }; }
+function readConnForm() { return { base: $("#cBase").value.trim().replace(/\/+$/, ""), user: $("#cUser").value.trim(), password: $("#cPass").value, direct: $("#cModeDirect").checked }; }
+function syncModeUi() {
+  const direct = $("#cModeDirect").checked; $("#directHelp").hidden = !direct;
+  $("#cOpenBase").href = ($("#cBase").value.trim() || "#") + "/?$format=json";
+  if (direct && location.protocol === "https:" && /^http:\/\//i.test($("#cBase").value.trim())) $("#cBase").value = $("#cBase").value.trim().replace(/^http:/i, "https:");
+}
 async function testConn(c) {
   $("#connResult").innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm"></span> проверяем…</div>';
   try {
-    const res = await fetch("/odata/?$format=json", { headers: connHeaders(c) });
+    let res;
+    if (c.direct) { try { res = await directFetch(c, "GET", "/?$format=json"); } catch { throw new OneCError(0, { proxyError: DIRECT_FAIL }, c.base); } }
+    else res = await fetch("/odata/?$format=json", { headers: connHeaders(c) });
     const text = await res.text(); let j = null; try { j = JSON.parse(text); } catch {}
     if (!res.ok) throw new OneCError(res.status, j ?? text, "/odata/");
     const n = j?.value?.length ?? 0;
@@ -655,6 +685,7 @@ async function testConn(c) {
 }
 function wireConn() {
   $("#btnConn").onclick = openConn;
+  $("#cModeProxy").onchange = $("#cModeDirect").onchange = $("#cBase").oninput = syncModeUi;
   $("#cEye").onclick = () => { $("#cPass").type = $("#cPass").type === "password" ? "text" : "password"; };
   $("#cTest").onclick = () => { const c = readConnForm(); if (!c.base) return $("#connResult").innerHTML = '<div class="text-danger small">Укажите URL</div>'; testConn(c); };
   $("#cSave").onclick = async () => {
