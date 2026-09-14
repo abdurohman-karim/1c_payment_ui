@@ -1,0 +1,10 @@
+# Netlify: static UI from ./public + two serverless functions (netlify/functions)
+#   /odata/*  -> proxy to 1C with Basic auth (see netlify/functions/odata.mts)
+#   /config   -> tells the UI whether server-side defaults (env vars) exist
+[build]
+  publish = "public"
+  command = "echo 'static site, nothing to build'"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
