@@ -24,6 +24,7 @@ const PORT = Number(process.argv[2] || process.env.PORT || 3200);
 
 function connFromRequest(req) {
   const h = req.headers["x-odata-conn"];
+  if (h === "none") return { base: "", user: "", password: "", source: "none" }; // browser explicitly refused server defaults
   if (h) {
     try {
       const c = JSON.parse(Buffer.from(h, "base64").toString("utf8"));
